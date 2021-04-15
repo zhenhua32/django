@@ -14,6 +14,7 @@ __all__ = [
     'DJANGO_VERSION_PICKLE_KEY',
 ]
 
+# 数据库连接
 connections = ConnectionHandler()
 
 router = ConnectionRouter()
@@ -22,6 +23,7 @@ router = ConnectionRouter()
 connection = ConnectionProxy(connections, DEFAULT_DB_ALIAS)
 
 
+# 用了内部的 signals 机制
 # Register an event to reset saved queries when a Django request is started.
 def reset_queries(**kwargs):
     for conn in connections.all():

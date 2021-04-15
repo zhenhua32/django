@@ -92,6 +92,7 @@ def set_rollback(rollback, using=None):
     return get_connection(using).set_rollback(rollback)
 
 
+# contextmanager 是用来简化 with 语句上下文管理器的创建的
 @contextmanager
 def mark_for_rollback_on_error(using=None):
     """
@@ -152,12 +153,14 @@ class Atomic(ContextDecorator):
     A stack of savepoints identifiers is maintained as an attribute of the
     connection. None denotes the absence of a savepoint.
 
+    可重入的
     This allows reentrancy even if the same AtomicWrapper is reused. For
     example, it's possible to define `oa = atomic('other')` and use `@oa` or
     `with oa:` multiple times.
 
     Since database connections are thread-local, this is thread-safe.
 
+    持久的
     An atomic block can be tagged as durable. In this case, raise a
     RuntimeError if it's nested within another atomic block. This guarantees
     that database changes in a durable block are committed to the database when
@@ -177,15 +180,18 @@ class Atomic(ContextDecorator):
     def __enter__(self):
         connection = get_connection(self.using)
 
+        # 不能在原子块中使用持久原子块, 只能用在最外层的原子块中
         if self.durable and self._ensure_durability and connection.in_atomic_block:
             raise RuntimeError(
                 'A durable atomic block cannot be nested within another '
                 'atomic block.'
             )
+        # 在最外层中
         if not connection.in_atomic_block:
             # Reset state when entering an outermost atomic block.
             connection.commit_on_exit = True
             connection.needs_rollback = False
+            # 如果不是自动提交状态, 说明已经禁用过自动提交了
             if not connection.get_autocommit():
                 # Pretend we're already in an atomic block to bypass the code
                 # that disables autocommit to enter a transaction, and make a
@@ -193,26 +199,31 @@ class Atomic(ContextDecorator):
                 connection.in_atomic_block = True
                 connection.commit_on_exit = False
 
+        # 在原子块中
         if connection.in_atomic_block:
             # We're already in a transaction; create a savepoint, unless we
             # were told not to or we're already waiting for a rollback. The
             # second condition avoids creating useless savepoints and prevents
             # overwriting needs_rollback until the rollback is performed.
+            # 添加一个保存点
             if self.savepoint and not connection.needs_rollback:
                 sid = connection.savepoint()
                 connection.savepoint_ids.append(sid)
             else:
                 connection.savepoint_ids.append(None)
         else:
+            # 禁用自动提交
             connection.set_autocommit(False, force_begin_transaction_with_broken_autocommit=True)
             connection.in_atomic_block = True
 
     def __exit__(self, exc_type, exc_value, traceback):
         connection = get_connection(self.using)
 
+        # TZH: 有问题, sid 可能未绑定
         if connection.savepoint_ids:
             sid = connection.savepoint_ids.pop()
         else:
+            # 提早
             # Prematurely unset this flag to allow using commit or rollback.
             connection.in_atomic_block = False
 
@@ -222,7 +233,9 @@ class Atomic(ContextDecorator):
                 # Wait until we exit the outermost block.
                 pass
 
+            # 不需要回滚
             elif exc_type is None and not connection.needs_rollback:
+                # 在原子块中, 就 commit 保存点
                 if connection.in_atomic_block:
                     # Release savepoint if there is one
                     if sid is not None:
@@ -240,7 +253,7 @@ class Atomic(ContextDecorator):
                                 # the original exception.
                                 connection.needs_rollback = True
                             raise
-                else:
+                else:  # 否则就 commit 整个事务
                     # Commit transaction
                     try:
                         connection.commit()
@@ -252,16 +265,19 @@ class Atomic(ContextDecorator):
                             # went wrong with the connection. Drop it.
                             connection.close()
                         raise
+            # 需要回滚
             else:
                 # This flag will be set to True again if there isn't a savepoint
                 # allowing to perform the rollback at this level.
                 connection.needs_rollback = False
                 if connection.in_atomic_block:
+                    # 当前层级无法执行回滚, 重设连接为需要回滚, 以便上层处理
                     # Roll back to savepoint if there is one, mark for rollback
                     # otherwise.
                     if sid is None:
                         connection.needs_rollback = True
                     else:
+                        # 回滚保存点
                         try:
                             connection.savepoint_rollback(sid)
                             # The savepoint won't be reused. Release it to
@@ -272,7 +288,7 @@ class Atomic(ContextDecorator):
                             # rollback at a higher level and avoid shadowing
                             # the original exception.
                             connection.needs_rollback = True
-                else:
+                else:  # 回滚整个事务
                     # Roll back transaction
                     try:
                         connection.rollback()
@@ -282,12 +298,14 @@ class Atomic(ContextDecorator):
                         connection.close()
 
         finally:
+            # 最外层退出
             # Outermost block exit when autocommit was enabled.
             if not connection.in_atomic_block:
                 if connection.closed_in_transaction:
                     connection.connection = None
                 else:
                     connection.set_autocommit(True)
+            # 在原子块中, 但没有保存点了, 且 commit_on_exit = False(仅在 autocommit 禁用时为 False)
             # Outermost block exit when autocommit was disabled.
             elif not connection.savepoint_ids and not connection.commit_on_exit:
                 if connection.closed_in_transaction:
