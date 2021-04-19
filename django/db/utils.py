@@ -51,6 +51,7 @@ class NotSupportedError(DatabaseError):
 
 class DatabaseErrorWrapper:
     """
+    可以参考下, 既能当上下文管理器, 又能当装饰器
     Context manager and decorator that reraises backend-specific database
     exceptions using Django's common wrappers.
     """
@@ -87,11 +88,15 @@ class DatabaseErrorWrapper:
                 # the connection unusable.
                 if dj_exc_type not in (DataError, IntegrityError):
                     self.wrapper.errors_occurred = True
+                # 链式异常, 错误信息会变成 The above exception was the direct cause of the following exception:
+                # 如果不使用 from 则是 During handling of the above exception, another exception occurred:
+                # https://docs.python.org/zh-cn/3/tutorial/errors.html#exception-chaining
                 raise dj_exc_value.with_traceback(traceback) from exc_value
 
     def __call__(self, func):
         # Note that we are intentionally not using @wraps here for performance
         # reasons. Refs #21109.
+        # 作为装饰器时, 直接用了 with self 上下文管理器
         def inner(*args, **kwargs):
             with self:
                 return func(*args, **kwargs)
@@ -100,6 +105,7 @@ class DatabaseErrorWrapper:
 
 def load_backend(backend_name):
     """
+    加载数据库后端的模块
     Return a database backend's "base" module given a fully qualified database
     backend name, or raise an error if it doesn't exist.
     """
@@ -214,6 +220,10 @@ class ConnectionHandler(BaseConnectionHandler):
 
 
 class ConnectionRouter:
+    """
+    设置数据库的连接路由, 当使用多数据库时
+    https://docs.djangoproject.com/zh-hans/3.2/topics/db/multi-db/#using-routers
+    """
     def __init__(self, routers=None):
         """
         If routers is not specified, default to settings.DATABASE_ROUTERS.
@@ -227,6 +237,7 @@ class ConnectionRouter:
         routers = []
         for r in self._routers:
             if isinstance(r, str):
+                # 导入类, r 应该是一个类的完整导入路径
                 router = import_string(r)()
             else:
                 router = r
@@ -234,7 +245,13 @@ class ConnectionRouter:
         return routers
 
     def _router_func(action):
+        """
+        获取路由函数
+        """
         def _route_db(self, model, **hints):
+            """
+            就是个选择数据库名的函数
+            """
             chosen_db = None
             for router in self.routers:
                 try:
@@ -243,12 +260,15 @@ class ConnectionRouter:
                     # If the router doesn't have a method, skip to the next one.
                     pass
                 else:
+                    # 如果成功了, 就调用这个方法, 方法有返回值就返回, 返回值应该是数据库名的字符串或者 None
                     chosen_db = method(model, **hints)
                     if chosen_db:
                         return chosen_db
+            # 从路由中没找到, 就访问当前实例的状态中的数据库名
             instance = hints.get('instance')
             if instance is not None and instance._state.db:
                 return instance._state.db
+            # 最后用默认值兜底
             return DEFAULT_DB_ALIAS
         return _route_db
 
@@ -256,6 +276,9 @@ class ConnectionRouter:
     db_for_write = _router_func('db_for_write')
 
     def allow_relation(self, obj1, obj2, **hints):
+        """
+        两个模型实例间是否支持关系连接
+        """
         for router in self.routers:
             try:
                 method = router.allow_relation
@@ -269,6 +292,9 @@ class ConnectionRouter:
         return obj1._state.db == obj2._state.db
 
     def allow_migrate(self, db, app_label, **hints):
+        """
+        是否允许迁移, app_label 是应用的名字
+        """
         for router in self.routers:
             try:
                 method = router.allow_migrate

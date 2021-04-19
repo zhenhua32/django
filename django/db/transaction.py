@@ -173,9 +173,9 @@ class Atomic(ContextDecorator):
     _ensure_durability = True
 
     def __init__(self, using, savepoint, durable):
-        self.using = using
-        self.savepoint = savepoint
-        self.durable = durable
+        self.using = using  # 使用的连接名字
+        self.savepoint = savepoint  # 是否启用保存点
+        self.durable = durable  # 是否持久化
 
     def __enter__(self):
         connection = get_connection(self.using)
@@ -315,10 +315,12 @@ class Atomic(ContextDecorator):
 
 
 def atomic(using=None, savepoint=True, durable=False):
+    # 裸装饰器 @atomic, 第一个参数 using 通常是被装饰的函数
     # Bare decorator: @atomic -- although the first argument is called
     # `using`, it's actually the function being decorated.
     if callable(using):
         return Atomic(DEFAULT_DB_ALIAS, savepoint, durable)(using)
+    # 调用式装饰器 @atomic() 或者用作上下文管理器 with 语句
     # Decorator: @atomic(...) or context manager: with atomic(...): ...
     else:
         return Atomic(using, savepoint, durable)
