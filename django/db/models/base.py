@@ -40,6 +40,7 @@ from django.utils.translation import gettext_lazy as _
 
 
 class Deferred:
+    # 推迟计算
     def __repr__(self):
         return '<Deferred field>'
 
@@ -53,6 +54,7 @@ DEFERRED = Deferred()
 def subclass_exception(name, bases, module, attached_to):
     """
     Create exception subclass. Used by ModelBase below.
+    快捷构建子类异常
 
     The exception is created in a way that allows it to be pickled, assuming
     that the returned exception class will be added as an attribute to the
@@ -65,15 +67,20 @@ def subclass_exception(name, bases, module, attached_to):
 
 
 def _has_contribute_to_class(value):
+    # 如果 value 不是类, 且有 contribute_to_class 这个属性
     # Only call contribute_to_class() if it's bound.
     return not inspect.isclass(value) and hasattr(value, 'contribute_to_class')
 
 
 class ModelBase(type):
+    """
+    模型类的基础
+    """
     """Metaclass for all models."""
     def __new__(cls, name, bases, attrs, **kwargs):
         super_new = super().__new__
 
+        # 只在子类中执行初始化, 如果没有从 bases 中找到子类, 就直接返回了
         # Also ensure initialization is only performed for subclasses of Model
         # (excluding Model class itself).
         parents = [b for b in bases if isinstance(b, ModelBase)]
@@ -98,7 +105,7 @@ class ModelBase(type):
                 new_attrs[obj_name] = obj
         new_class = super_new(cls, name, bases, new_attrs, **kwargs)
 
-        abstract = getattr(attr_meta, 'abstract', False)
+        abstract = getattr(attr_meta, 'abstract', False)  # 是否是抽象类
         meta = attr_meta or getattr(new_class, 'Meta', None)
         base_meta = getattr(new_class, '_meta', None)
 
@@ -322,6 +329,9 @@ class ModelBase(type):
         return new_class
 
     def add_to_class(cls, name, value):
+        """
+        将一个值添加到类中, 会根据是否有 contribute_to_class 方法优先调用
+        """
         if _has_contribute_to_class(value):
             value.contribute_to_class(cls, name)
         else:
